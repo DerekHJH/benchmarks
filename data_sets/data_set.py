@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
-from datasets import load_dataset
+import torch
 from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,9 @@ class Data_set(ABC):
         )
 
         # Construct mutable attributes
-        if os.path.exists(self.preprocessed_data_path):
+        if os.path.exists(
+            self.preprocessed_data_path
+        ):  # If we need to force-reload the data, we need to remove the preprocessed_data.json file first
             self.data = pd.read_json(self.preprocessed_data_path)
             logger.info(f"Loaded dataset locally from {self.preprocessed_data_path}")
         else:
@@ -133,28 +135,28 @@ class Data_set(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def create_groundtruth_field(self, row: Dict) -> Dict:
+    def create_groundtruth_fields(self, row: Dict) -> Dict:
         """
-        Create the row["groundtruth"] column in the dataset. To be used with the pandas apply function.
+        Create the row["groundtruth"], row["groundtruth_token_ids"], row["groundtruth_length"] columns in the dataset. To be used with the pandas apply function.
 
         Args:
             row: One row of the dataset.
 
         Returns:
-            The row with the row["groundtruth"] updated.
+            The updated row.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def create_prompt_field(self, row: Dict) -> Dict:
+    def create_prompt_fields(self, row: Dict) -> Dict:
         """
-        Create the row["prompt"] column in the dataset. To be used with the pandas apply function.
+        Create the row["prompt"], row["prompt_token_ids"], row["prompt_length"] columns in the dataset. To be used with the pandas apply function.
 
         Args:
             row: One row of the dataset.
 
         Returns:
-            The row with the row["prompt"] updated.
+            The updated row.
         """
         raise NotImplementedError
 
@@ -224,17 +226,39 @@ class Data_set(ABC):
 
 class Mooncake(Data_set):
 
+    BLOCK_SIZE = 512
+
     def load_data_online(self) -> pd.DataFrame:
         return pd.read_json(
             Path(__file__).parent / "online_data" / "mooncake_trace.jsonl", lines=True
         )
 
-    def create_groundtruth_field(self, row: Dict) -> Dict:
+    def create_groundtruth_fields(self, row: Dict) -> Dict:
         row["groundtruth"] = 0
+
+        # The following lines take into account the dependecy of each request, which relates to the inter-request KV reuse
+        token_ids_2Dlist = [
+            [row["hash_ids"][i]] * Mooncake.BLOCK_SIZE for i in range(len(row["hash_ids"]))
+        ]
+        token_ids_1Dlist = [item for sublist in token_ids_2Dlist for item in sublist]
+        row["groundtruth_token_ids"] = token_ids_1Dlist[
+            row["input_length"] : row["input_length"] + row["output_length"]
+        ]
+
+        row["groundtruth_length"] = row["output_length"]
         return row
 
-    def create_prompt_field(self, row: Dict) -> Dict:
+    def create_prompt_fields(self, row: Dict) -> Dict:
         row["prompt"] = 0
+
+        # The following lines take into account the dependecy of each request, which relates to the inter-request KV reuse
+        token_ids_2Dlist = [
+            [row["hash_ids"][i]] * Mooncake.BLOCK_SIZE for i in range(len(row["hash_ids"]))
+        ]
+        token_ids_1Dlist = [item for sublist in token_ids_2Dlist for item in sublist]
+        row["prompt_token_ids"] = token_ids_1Dlist[: row["input_length"]]
+
+        row["prompt_length"] = row["input_length"]
         return row
 
     def _calc_accuracy(self, row: Dict, approach: str) -> Dict:
@@ -243,19 +267,19 @@ class Mooncake(Data_set):
 
 
 class ShareGPT(Data_set):
-
+    # TODO(hjh): This dataset is not ready
     def load_data_online(self) -> pd.DataFrame:
         # We first download the dataset from the huggingface hub and put the json file in the following position
         part1 = pd.read_json(Path(__file__).parent / "online_data" / "sg_90k_part1.json")
         part2 = pd.read_json(Path(__file__).parent / "online_data" / "sg_90k_part2.json")
         return pd.concat([part1, part2])
 
-    def create_groundtruth_field(self, row: Dict) -> Dict:
+    def create_groundtruth_fields(self, row: Dict) -> Dict:
         # row["groundtruth"] = row["answer"].split("####")[-1].strip()
         row["groundtruth"] = 0
         return row
 
-    def create_prompt_field(self, row: Dict) -> Dict:
+    def create_prompt_fields(self, row: Dict) -> Dict:
         # row["prompt"] = (
         #     row["question"] + "\nMake sure the final answer is standalone and in latex format."
         # )
@@ -280,10 +304,4 @@ if __name__ == "__main__":
         model_name="Llama-3.1-8B-Instruct",
         approach_name="raas",
         tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
-        # num_data_preprocess=10,
-        # num_data_test=10,
     )
-
-    import pdb
-
-    pdb.set_trace()
