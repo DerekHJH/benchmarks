@@ -49,6 +49,8 @@ class Data_set(ABC):
         self.model_name = model_name
         self.approach_name = approach_name
         self.cache_folder = os.path.join(cache_root, dataset_name, model_name)
+        if not os.path.exists(self.cache_folder):
+            os.makedirs(self.cache_folder)
         self.tokenizer_name = tokenizer_name
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.num_data_preprocess = num_data_preprocess
@@ -74,6 +76,7 @@ class Data_set(ABC):
 
             
             self.data.to_json(preprocessed_data_path, orient="records", indent=4)
+
         self.data = self.data[:num_data_test]
 
         self.result: pd.DataFrame = None # Hold the result of the test using (dataset_name, model_name, approach_name, tokenizer_name)
@@ -223,17 +226,16 @@ class ShareGPT(Data_set):
 
     def load_data_online(self) -> pd.DataFrame:
         # return load_dataset("RyokoAI/ShareGPT52K", split="test").to_pandas()
-        return pd.read_json("/data0/hujunhao/.cache/huggingface/hub/datasets--RyokoAI--ShareGPT52K/snapshots/6f9b78cc1dd15dbb51d3c51ccc219c558962fd77/sg_90k_part1.json")
+        return pd.read_json("/data0/hujunhao/.cache/huggingface/hub/datasets--RyokoAI--ShareGPT52K/snapshots/6f9b78cc1dd15dbb51d3c51ccc219c558962fd77/old/sg_52k.json")
 
     def create_groundtruth_field(self, row: Dict) -> Dict:
-        row["groundtruth"] = row["answer"].split("####")[-1].strip()
+        # row["groundtruth"] = row["answer"].split("####")[-1].strip()
         return row
 
     def create_prompt_field(self, row: Dict) -> Dict:
-        # TODO(hjh): Create more complex prompts
-        row["prompt"] = (
-            row["question"] + "\nMake sure the final answer is standalone and in latex format."
-        )
+        # row["prompt"] = (
+        #     row["question"] + "\nMake sure the final answer is standalone and in latex format."
+        # )
         return row
 
     def _calc_accuracy(self, row: Dict, approach: str) -> Dict:
@@ -252,7 +254,7 @@ if __name__ == "__main__":
     dataset = Data_set.create_dataset(
         cache_root="/data0/hujunhao/benchmarks",
         dataset_name="sharegpt",
-        model_name="meta-llama/Llama-3.1-8B-Instruct",
+        model_name="Llama-3.1-8B-Instruct",
         approach_name="raas",
         tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
         num_data_preprocess=10,
