@@ -83,8 +83,8 @@ class Data_set(ABC):
             # Common processing for all datasets
             self.data = self.data[: self.num_data_preprocess]
             self.data = self.data.apply(
-                lambda row: self.create_groundtruth_field(row), axis=1
-            ).apply(lambda row: self.create_prompt_field(row), axis=1)
+                lambda row: self.create_groundtruth_fields(row), axis=1
+            ).apply(lambda row: self.create_prompt_fields(row), axis=1)
 
             self.data.to_json(self.preprocessed_data_path, orient="records", indent=4)
         self.data = self.data[:num_data_test]
@@ -305,3 +305,6 @@ if __name__ == "__main__":
         approach_name="raas",
         tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
     )
+    import pdb
+
+    pdb.set_trace()
