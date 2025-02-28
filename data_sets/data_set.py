@@ -1,11 +1,12 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Dict, List
-from transformers import AutoTokenizer
+
 import pandas as pd
 from datasets import load_dataset
-from benchmarks.data_sets.utils import f1_score
+from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +19,17 @@ class Data_set(ABC):
     datasets (dataset) and Datasets (Dataset).
     """
 
-    def __init__(self, 
-                cache_root: str,
-                dataset_name: str,
-                model_name: str,
-                approach_name: str,
-                tokenizer_name: str, 
-                num_data_preprocess=int(1e6), 
-                num_data_test=int(1e6),
-                **kwargs
-            ) -> None:
+    def __init__(
+        self,
+        cache_root: str,
+        dataset_name: str,
+        model_name: str,
+        approach_name: str,
+        tokenizer_name: str,
+        num_data_preprocess=int(1e6),
+        num_data_test=int(1e6),
+        **kwargs,
+    ) -> None:
         """
         Load dataset either locally or online.
 
@@ -57,28 +59,31 @@ class Data_set(ABC):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.num_data_preprocess = num_data_preprocess
         self.num_data_test = num_data_test
-        assert self.num_data_test <= self.num_data_preprocess, "num_data_test should be less than or equal to num_data_preprocess"
+        assert (
+            self.num_data_test <= self.num_data_preprocess
+        ), "num_data_test should be less than or equal to num_data_preprocess"
         self.kwargs = kwargs
 
         # Mutable attributes
-        self.data: pd.DataFrame = None # Hold the preprocessed data
-        self.result: pd.DataFrame = None # Hold the result of the test using (dataset_name, model_name, approach_name, tokenizer_name)
+        self.data: pd.DataFrame = None  # Hold the preprocessed data
+        self.result: pd.DataFrame = (
+            None  # Hold the result of the test using (dataset_name, model_name, approach_name, tokenizer_name)
+        )
 
         # Construct mutable attributes
         if os.path.exists(self.preprocessed_data_path):
             self.data = pd.read_json(self.preprocessed_data_path)
             logger.info(f"Loaded dataset locally from {self.preprocessed_data_path}")
         else:
-            self.data = self.load_data_online() # Implemented in the subclass
+            self.data = self.load_data_online()  # Implemented in the subclass
             logger.info("Loaded dataset online")
-            
+
             # Common processing for all datasets
-            self.data = self.data[:self.num_data_preprocess]
+            self.data = self.data[: self.num_data_preprocess]
             self.data = self.data.apply(
                 lambda row: self.create_groundtruth_field(row), axis=1
             ).apply(lambda row: self.create_prompt_field(row), axis=1)
 
-            
             self.data.to_json(self.preprocessed_data_path, orient="records", indent=4)
         self.data = self.data[:num_data_test]
 
@@ -88,7 +93,6 @@ class Data_set(ABC):
             self.result = pd.DataFrame()
         logger.info(f"The progress is {len(self.result)}/{num_data_test}")
 
-
     @staticmethod
     def create_dataset(
         cache_root: str,
@@ -96,9 +100,9 @@ class Data_set(ABC):
         model_name: str,
         approach_name: str,
         tokenizer_name: str,
-        num_data_preprocess=int(1e6), 
+        num_data_preprocess=int(1e6),
         num_data_test=int(1e6),
-        **kwargs
+        **kwargs,
     ):
         if dataset_name == "sharegpt":
             Class = ShareGPT
@@ -115,7 +119,7 @@ class Data_set(ABC):
             tokenizer_name=tokenizer_name,
             num_data_preprocess=num_data_preprocess,
             num_data_test=num_data_test,
-            **kwargs
+            **kwargs,
         )
 
     @abstractmethod
@@ -167,7 +171,6 @@ class Data_set(ABC):
         """
         raise NotImplementedError
 
-
     """
     The following methods are common to all subclasses and SHOULD NOT BE OVERRIDDEN.
     This constraint is to ensure consistent interfaces.
@@ -207,7 +210,6 @@ class Data_set(ABC):
                     )
                 )
             self.data[key] = value + (len(self.data) - len(value)) * [None]
-        
 
     def __iter__(self):
         for idx, row in self.data.iterrows():
@@ -220,77 +222,68 @@ class Data_set(ABC):
         return self.data.iloc[idx]
 
 
+class Mooncake(Data_set):
+
+    def load_data_online(self) -> pd.DataFrame:
+        return pd.read_json(
+            Path(__file__).parent / "online_data" / "mooncake_trace.jsonl", lines=True
+        )
+
+    def create_groundtruth_field(self, row: Dict) -> Dict:
+        row["groundtruth"] = 0
+        return row
+
+    def create_prompt_field(self, row: Dict) -> Dict:
+        row["prompt"] = 0
+        return row
+
+    def _calc_accuracy(self, row: Dict, approach: str) -> Dict:
+        row["accuracy"] = 0
+        return row
 
 
 class ShareGPT(Data_set):
 
     def load_data_online(self) -> pd.DataFrame:
-        # return load_dataset("RyokoAI/ShareGPT52K", split="test").to_pandas()
-        return pd.read_json("/data0/hujunhao/.cache/huggingface/hub/datasets--RyokoAI--ShareGPT52K/snapshots/6f9b78cc1dd15dbb51d3c51ccc219c558962fd77/old/sg_52k.json")
+        # We first download the dataset from the huggingface hub and put the json file in the following position
+        part1 = pd.read_json(Path(__file__).parent / "online_data" / "sg_90k_part1.json")
+        part2 = pd.read_json(Path(__file__).parent / "online_data" / "sg_90k_part2.json")
+        return pd.concat([part1, part2])
 
     def create_groundtruth_field(self, row: Dict) -> Dict:
         # row["groundtruth"] = row["answer"].split("####")[-1].strip()
+        row["groundtruth"] = 0
         return row
 
     def create_prompt_field(self, row: Dict) -> Dict:
         # row["prompt"] = (
         #     row["question"] + "\nMake sure the final answer is standalone and in latex format."
         # )
+        row["prompt"] = 0
         return row
 
     def _calc_accuracy(self, row: Dict, approach: str) -> Dict:
 
-        model_output: str = extract_answer(row[f"output_{approach}"], "aime")
-        groundtruth: str = str(row["groundtruth"])
+        # model_output: str = extract_answer(row[f"output_{approach}"], "aime")
+        # groundtruth: str = str(row["groundtruth"])
 
-        row[f"accuracy_{approach}"] = math_equal(model_output, groundtruth)
-        row[f"final_output_{approach}"] = model_output
-        # row[f"accuracy_{approach}"] = rouge_score(model_output, groundtruth)
-        return row
-
-
-
-
-
-
-class ShareGPT(Data_set):
-
-    def load_data_online(self) -> pd.DataFrame:
-        # return load_dataset("RyokoAI/ShareGPT52K", split="test").to_pandas()
-        return pd.read_json("/data0/hujunhao/.cache/huggingface/hub/datasets--RyokoAI--ShareGPT52K/snapshots/6f9b78cc1dd15dbb51d3c51ccc219c558962fd77/old/sg_52k.json")
-
-    def create_groundtruth_field(self, row: Dict) -> Dict:
-        # row["groundtruth"] = row["answer"].split("####")[-1].strip()
-        return row
-
-    def create_prompt_field(self, row: Dict) -> Dict:
-        # row["prompt"] = (
-        #     row["question"] + "\nMake sure the final answer is standalone and in latex format."
-        # )
-        return row
-
-    def _calc_accuracy(self, row: Dict, approach: str) -> Dict:
-
-        model_output: str = extract_answer(row[f"output_{approach}"], "aime")
-        groundtruth: str = str(row["groundtruth"])
-
-        row[f"accuracy_{approach}"] = math_equal(model_output, groundtruth)
-        row[f"final_output_{approach}"] = model_output
-        # row[f"accuracy_{approach}"] = rouge_score(model_output, groundtruth)
+        # row[f"accuracy_{approach}"] = math_equal(model_output, groundtruth)
+        row["accuracy"] = 0
         return row
 
 
 if __name__ == "__main__":
 
     dataset = Data_set.create_dataset(
-        cache_root="/data0/hujunhao",
+        cache_root="/data0/hujunhao/temp",
         dataset_name="mooncake",
         model_name="Llama-3.1-8B-Instruct",
         approach_name="raas",
         tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
-        num_data_preprocess=10,
-        num_data_test=10,
+        # num_data_preprocess=10,
+        # num_data_test=10,
     )
 
     import pdb
+
     pdb.set_trace()
