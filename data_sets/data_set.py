@@ -222,6 +222,39 @@ class Data_set(ABC):
         return self.data.iloc[idx]
 
 
+
+
+class ShareGPT(Data_set):
+
+    def load_data_online(self) -> pd.DataFrame:
+        # return load_dataset("RyokoAI/ShareGPT52K", split="test").to_pandas()
+        return pd.read_json("/data0/hujunhao/.cache/huggingface/hub/datasets--RyokoAI--ShareGPT52K/snapshots/6f9b78cc1dd15dbb51d3c51ccc219c558962fd77/old/sg_52k.json")
+
+    def create_groundtruth_field(self, row: Dict) -> Dict:
+        # row["groundtruth"] = row["answer"].split("####")[-1].strip()
+        return row
+
+    def create_prompt_field(self, row: Dict) -> Dict:
+        # row["prompt"] = (
+        #     row["question"] + "\nMake sure the final answer is standalone and in latex format."
+        # )
+        return row
+
+    def _calc_accuracy(self, row: Dict, approach: str) -> Dict:
+
+        model_output: str = extract_answer(row[f"output_{approach}"], "aime")
+        groundtruth: str = str(row["groundtruth"])
+
+        row[f"accuracy_{approach}"] = math_equal(model_output, groundtruth)
+        row[f"final_output_{approach}"] = model_output
+        # row[f"accuracy_{approach}"] = rouge_score(model_output, groundtruth)
+        return row
+
+
+
+
+
+
 class ShareGPT(Data_set):
 
     def load_data_online(self) -> pd.DataFrame:
@@ -252,8 +285,8 @@ class ShareGPT(Data_set):
 if __name__ == "__main__":
 
     dataset = Data_set.create_dataset(
-        cache_root="/data0/hujunhao/benchmarks",
-        dataset_name="sharegpt",
+        cache_root="/data0/hujunhao",
+        dataset_name="mooncake",
         model_name="Llama-3.1-8B-Instruct",
         approach_name="raas",
         tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
