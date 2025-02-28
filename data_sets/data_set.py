@@ -51,6 +51,8 @@ class Data_set(ABC):
         self.cache_folder = os.path.join(cache_root, dataset_name, model_name)
         if not os.path.exists(self.cache_folder):
             os.makedirs(self.cache_folder)
+        self.preprocessed_data_path = os.path.join(self.cache_folder, "preprocessed_data.json")
+        self.result_path = os.path.join(self.cache_folder, f"{approach_name}.json")
         self.tokenizer_name = tokenizer_name
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.num_data_preprocess = num_data_preprocess
@@ -60,10 +62,12 @@ class Data_set(ABC):
 
         # Mutable attributes
         self.data: pd.DataFrame = None # Hold the preprocessed data
-        preprocessed_data_path = os.path.join(self.cache_folder, "preprocessed_data.json")
-        if os.path.exists(preprocessed_data_path):
-            self.data = pd.read_json(preprocessed_data_path)
-            logger.info(f"Loaded dataset locally from {preprocessed_data_path}")
+        self.result: pd.DataFrame = None # Hold the result of the test using (dataset_name, model_name, approach_name, tokenizer_name)
+
+        # Construct mutable attributes
+        if os.path.exists(self.preprocessed_data_path):
+            self.data = pd.read_json(self.preprocessed_data_path)
+            logger.info(f"Loaded dataset locally from {self.preprocessed_data_path}")
         else:
             self.data = self.load_data_online() # Implemented in the subclass
             logger.info("Loaded dataset online")
@@ -75,14 +79,11 @@ class Data_set(ABC):
             ).apply(lambda row: self.create_prompt_field(row), axis=1)
 
             
-            self.data.to_json(preprocessed_data_path, orient="records", indent=4)
-
+            self.data.to_json(self.preprocessed_data_path, orient="records", indent=4)
         self.data = self.data[:num_data_test]
 
-        self.result: pd.DataFrame = None # Hold the result of the test using (dataset_name, model_name, approach_name, tokenizer_name)
-        result_path = os.path.join(self.cache_folder, f"{approach_name}.json")
-        if os.path.exists(result_path):
-            self.result = pd.read_json(result_path)
+        if os.path.exists(self.result_path):
+            self.result = pd.read_json(self.result_path)
         else:
             self.result = pd.DataFrame()
         logger.info(f"The progress is {len(self.result)}/{num_data_test}")
@@ -101,6 +102,8 @@ class Data_set(ABC):
     ):
         if dataset_name == "sharegpt":
             Class = ShareGPT
+        elif dataset_name == "mooncake":
+            Class = Mooncake
         else:
             raise NotImplementedError
 
@@ -152,17 +155,15 @@ class Data_set(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _calc_accuracy(self, row: Dict, approach: str) -> Dict:
+    def _calc_accuracy(self, row: Dict) -> Dict:
         """
-        Check the correctness of the model output and store the result in the f'accuracy_{approach}' column.
-        And store the final output in the f'final_output_{approach}' column.
+        Check the correctness of the model output and store the result in the f"accuracy" column.
 
         Args:
             row: One row of the dataset.
-            approach: The approach used to generate the output.
 
         Returns:
-            The row with the row[f'accuracy_{approach}'], row[f'final_output_{approach}'] updated.
+            The row with the row["accuracy"] updated.
         """
         raise NotImplementedError
 
@@ -174,7 +175,7 @@ class Data_set(ABC):
     please refer to how calc_accruacy and _calc_accuracy methods are implemented.
     """
 
-    def calc_accuracy(self, approach: str) -> None:
+    def calc_accuracy(self) -> None:
         """
         Compare the model output with the groundtruth and calculate the accuracy.
         Store the accuracy in the "accuracy" column.
@@ -182,14 +183,11 @@ class Data_set(ABC):
         Args:
             approach: The approach used to generate the output.
         """
-        result_path = os.path.join(self.cache_folder, f"{approach}.json")
-        assert os.path.exists(result_path), f"{result_path} not found"
-        self.result = pd.read_json(result_path)
-        assert "output" in result.columns, f"output not in the result"
-        assert "groundtruth" in result.columns, "groundtruth not in the result"
+        assert "output" in self.result.columns, f"output not in the result"
+        assert "groundtruth" in self.result.columns, "groundtruth not in the result"
 
-        result = result.apply(lambda row: self._calc_accuracy(row, approach), axis=1)
-        result.to_json(result_path, orient="records", indent=4)
+        self.result = self.result.apply(lambda row: self._calc_accuracy(row), axis=1)
+        self.result.to_json(self.result_path, orient="records", indent=4)
 
     def update(self, new_data: Dict[str, List]) -> None:
         """
