@@ -2,7 +2,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import pandas as pd
 import torch
@@ -91,9 +91,13 @@ class Data_set(ABC):
 
         if os.path.exists(self.result_path):
             self.result = pd.read_json(self.result_path)
+            # We update the "finished" field each time we load the result
+            self.result = self.result.apply(lambda row: self.check_finished(row), axis=1)
         else:
-            self.result = pd.DataFrame()
-        logger.info(f"The progress is {len(self.result)}/{num_data_test}")
+            # self.result must have the column "finished", with 0 indicating unfinished and 1 indicating finished
+            self.result = pd.DataFrame({"finished": [0] * len(self.data)})
+        num_data_test_finished = self.result["finished"].sum()
+        logger.info(f"The progress is {num_data_test_finished}/{num_data_test}")
 
     @staticmethod
     def create_dataset(
@@ -194,34 +198,53 @@ class Data_set(ABC):
         self.result = self.result.apply(lambda row: self._calc_accuracy(row), axis=1)
         self.result.to_json(self.result_path, orient="records", indent=4)
 
-    def update(self, new_data: Dict[str, List]) -> None:
+    def update_result(
+        self,
+        row: int,
+        column: str,
+        value: Any,
+    ) -> None:
         """
-        Update the dataset with new dictionary data. If the length of the new data is less than the original data,
-        fill the rest with None.
+        Update the result with self.result.loc[row, column] = value. If column does not exists,
+        create the column filled with None value.
 
         Args:
-            new_data: The new dictionary data to update the dataset.
+            row: The row index.
+            column: The column name.
+            value: The value to be updated.
+
+        Returns:
+            None
         """
-        for key, value in new_data.items():
-            if len(value) < len(self.data):
-                logger.warning(
-                    (
-                        "Length of new data is less than the original data: "
-                        f"{len(value)} < {len(self.data)}."
-                        "We fill the rest with None."
-                    )
-                )
-            self.data[key] = value + (len(self.data) - len(value)) * [None]
+        if column not in self.data.columns:
+            self.result[column] = [None] * len(self.data)
+        self.result.loc[row, column] = value
+        # TODO(hjh): If this line slows down the process, save the result every X updates.
+        self.result.to_json(self.result_path, orient="records", indent=4)
+
+    def check_finished(self, row: Dict) -> Dict:
+        """
+        Check if the row is finished. If the row is finished, set row["finished"] = 1.
+        The condition can be changed according to users' needs.
+
+        Args:
+            row: One row of the dataset.
+
+        Returns:
+            The updated row.
+        """
+        # TODO(hjh): Change the condition according to the needs
+        row["finished"] = 1 if len(row) > 1 and row.notna().all() else 0
+        return row
 
     def __iter__(self):
         for idx, row in self.data.iterrows():
+            if row["finished"]:
+                continue
             yield idx, row["prompt_token_ids"], row["groundtruth_token_ids"]
 
     def __len__(self) -> int:
         return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data.iloc[idx]
 
 
 class Mooncake(Data_set):
@@ -302,7 +325,7 @@ if __name__ == "__main__":
         cache_root="/data0/hujunhao/temp",
         dataset_name="mooncake",
         model_name="Llama-3.1-8B-Instruct",
-        approach_name="raas",
+        approach_name="rr",
         tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
     )
     import pdb
