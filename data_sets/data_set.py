@@ -215,7 +215,7 @@ class Data_set(ABC):
 
     def __iter__(self):
         for idx, row in self.data.iterrows():
-            yield idx, row["prompt"], row["groundtruth"]
+            yield idx, row["prompt_token_ids"], row["groundtruth_token_ids"]
 
     def __len__(self) -> int:
         return len(self.data)
